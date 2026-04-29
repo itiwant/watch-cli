@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# audio-q <audio-or-video> "<question>"
+# Asks a multimodal LLM a question about an audio/video file. Goes beyond
+# pure speech-to-text: hears tone, music, ambient SFX, speaker emotion,
+# language, pacing — the full audio scene.
+#
+# Routing:
+#   - Kyma mode (KYMA_API_KEY set): POST api.kymaapi.com/v1/audio/understand
+#     Get a Kyma key at https://kymaapi.com.
+#   - Direct mode (GOOGLE_AI_KEY set): POST Gemini API directly (BYO).
+
+set -euo pipefail
+
+SELF="${BASH_SOURCE[0]}"
+SELF_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+ROOT_DIR="$(cd "$SELF_DIR/.." && pwd)"
+# shellcheck source=../lib/env.sh
+source "$ROOT_DIR/lib/env.sh"
+
+INPUT="${1:-}"
+QUESTION="${2:-}"
+
+if [[ -z "$INPUT" || ! -f "$INPUT" || -z "$QUESTION" ]]; then
+  echo 'usage: audio-q <audio-or-video> "<question>"' >&2
+  exit 64
+fi
+
+watch_cli_audio_mode_check "understand" || exit 1
+
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "[audio-q] ffmpeg required. brew install ffmpeg / apt install ffmpeg" >&2
+  exit 1
+fi
+if ! command -v jq >/dev/null 2>&1; then
+  echo "[audio-q] jq required. brew install jq / apt install jq" >&2
+  exit 1
+fi
+
+HASH="$(echo -n "$INPUT" | shasum | cut -c1-10)"
+AUDIO="/tmp/audioq_${HASH}.mp3"
+if [[ ! -s "$AUDIO" ]]; then
+  ffmpeg -hide_banner -loglevel error -y -i "$INPUT" \
+    -vn -ac 1 -ar 16000 -b:a 48k -f mp3 "$AUDIO" 2>&1 >&2 || {
+    echo "[audio-q] ffmpeg audio extraction failed" >&2
+    exit 1
+  }
+fi
+
+SIZE=$(stat -f%z "$AUDIO" 2>/dev/null || stat -c%s "$AUDIO")
+if (( SIZE > 19 * 1024 * 1024 )); then
+  echo "[audio-q] audio is $((SIZE / 1024 / 1024))MB — exceeds 20MB inline cap. Trim source first." >&2
+  exit 1
+fi
+
+# Audio duration for Kyma billing hint (rounded up to int seconds).
+DUR_SEC=$(ffprobe -v error -show_entries format=duration \
+            -of default=nw=1:nk=1 "$AUDIO" 2>/dev/null | awk '{ printf "%d", ($1 + 1) }')
+
+case "$WATCH_AUDIO_MODE" in
+  kyma)
+    RESP="$(curl -sS -X POST \
+      -H "Authorization: Bearer $KYMA_API_KEY" \
+      -F "file=@$AUDIO;type=audio/mpeg" \
+      -F "model=gemini-3-flash-audio" \
+      -F "question=$QUESTION" \
+      -F "duration_sec=$DUR_SEC" \
+      "$WATCH_KYMA_BASE/v1/audio/understand")"
+
+    TEXT="$(echo "$RESP" | jq -r '.answer // empty')"
+    if [[ -z "$TEXT" ]]; then
+      ERR="$(echo "$RESP" | jq -r '.error.message // "unknown error"')"
+      echo "[audio-q] Kyma call failed: $ERR" >&2
+      exit 1
+    fi
+    echo "$TEXT"
+    ;;
+
+  direct)
+    B64="$(base64 < "$AUDIO" | tr -d '\n')"
+    BODY="$(jq -n \
+      --arg q "$QUESTION" \
+      --arg data "$B64" \
+      '{
+        contents: [{
+          parts: [
+            { inline_data: { mime_type: "audio/mp3", data: $data } },
+            { text: $q }
+          ]
+        }],
+        generationConfig: { temperature: 0.3, maxOutputTokens: 2048 }
+      }')"
+
+    RESP="$(curl -sS -X POST \
+      -H "Content-Type: application/json" \
+      -H "x-goog-api-key: $GOOGLE_AI_KEY" \
+      -d "$BODY" \
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")"
+
+    TEXT="$(echo "$RESP" | jq -r '.candidates[0].content.parts[0].text // empty')"
+    if [[ -z "$TEXT" ]]; then
+      ERR="$(echo "$RESP" | jq -r '.error.message // "unknown error"')"
+      echo "[audio-q] Gemini call failed: $ERR" >&2
+      exit 1
+    fi
+    echo "$TEXT"
+    ;;
+esac

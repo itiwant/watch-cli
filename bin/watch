@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# watch <url> [frame-count] [--cookies <file>]
+# One-shot orchestrator: download a video, extract evenly-spaced frames,
+# transcribe the audio. Prints a single block easy for an AI agent to
+# consume:
+#
+#   VIDEO: <path>
+#   DURATION: <seconds>
+#   FRAMES:
+#     <path1>
+#     <path2>
+#     …
+#   TRANSCRIPT:
+#     <full text>
+#
+# After running, the calling agent reads each FRAMES path (image tool
+# understands JPG) and reads the TRANSCRIPT inline. Combined = enough
+# context to "watch" the video.
+#
+# Default frame count = 8.
+
+set -euo pipefail
+
+URL=""
+COUNT="8"
+COOKIES_ARG=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --cookies)
+      COOKIES_ARG="--cookies $2"
+      shift 2
+      ;;
+    --cookies=*)
+      COOKIES_ARG="--cookies ${1#*=}"
+      shift
+      ;;
+    -h|--help)
+      sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      if [[ -z "$URL" ]]; then
+        URL="$1"
+      elif [[ "$COUNT" == "8" ]]; then
+        COUNT="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$URL" ]]; then
+  echo "usage: watch <url> [frame-count] [--cookies <file>]" >&2
+  exit 64
+fi
+
+SELF="${BASH_SOURCE[0]}"
+SELF_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+
+echo "[watch] downloading $URL …" >&2
+# shellcheck disable=SC2086
+VIDEO="$("$SELF_DIR/dl-video" "$URL" $COOKIES_ARG)"
+echo "[watch] video: $VIDEO" >&2
+
+DUR="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null || echo 0)"
+DUR_INT="${DUR%.*}"
+
+echo "[watch] extracting $COUNT frames …" >&2
+FRAMES="$("$SELF_DIR/extract-frames" "$VIDEO" "$COUNT")"
+
+echo "[watch] transcribing audio …" >&2
+TRANSCRIPT="$("$SELF_DIR/transcribe" "$VIDEO")"
+
+# Final block — single stdout payload for downstream consumers.
+echo "VIDEO: $VIDEO"
+echo "DURATION: $DUR_INT"
+echo "FRAMES:"
+while IFS= read -r f; do
+  echo "  $f"
+done <<< "$FRAMES"
+echo "TRANSCRIPT:"
+echo "$TRANSCRIPT" | sed 's/^/  /'

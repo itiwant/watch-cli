@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# dl-video <url> [out-dir]
+# Downloads a video from any yt-dlp-supported platform (YouTube, X,
+# LinkedIn, TikTok, Reddit, Vimeo, Facebook, …) into a local mp4 and
+# prints the absolute path on stdout. Stderr carries progress.
+#
+# Cookie fallback (4 tiers, tried in order):
+#   1. Anonymous fetch — works for all public videos.
+#   2. Auto-detect signed-in browser (Chrome → Firefox → Safari → Edge).
+#      Override via WATCH_BROWSER=chrome|firefox|safari|edge|brave|chromium.
+#   3. Manual cookies file via --cookies <file> (Netscape format).
+#   4. Graceful error with guidance — no silent failure.
+
+set -euo pipefail
+
+URL=""
+OUTDIR="/tmp/dl-video"
+COOKIES_FILE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --cookies)
+      COOKIES_FILE="$2"
+      shift 2
+      ;;
+    --cookies=*)
+      COOKIES_FILE="${1#*=}"
+      shift
+      ;;
+    -h|--help)
+      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      if [[ -z "$URL" ]]; then
+        URL="$1"
+      elif [[ "$OUTDIR" == "/tmp/dl-video" ]]; then
+        OUTDIR="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$URL" ]]; then
+  echo "usage: dl-video <url> [out-dir] [--cookies <file>]" >&2
+  exit 64
+fi
+
+if ! command -v yt-dlp >/dev/null 2>&1; then
+  echo "[dl-video] yt-dlp not found. Install:" >&2
+  echo "  brew install yt-dlp     # macOS" >&2
+  echo "  pipx install yt-dlp     # Linux/Windows" >&2
+  exit 1
+fi
+
+mkdir -p "$OUTDIR"
+
+# Idempotent cache: same URL → same output file.
+HASH="$(echo -n "$URL" | shasum | cut -c1-12)"
+OUT="$OUTDIR/$HASH.mp4"
+if [[ -s "$OUT" ]]; then
+  echo "$OUT"
+  exit 0
+fi
+
+# ≤720p single-file format keeps downloads quick and avoids the bv*+ba
+# merge path which fails on hosts (LinkedIn, FB) that only expose one
+# muxed file. /best fallback covers everything else.
+FORMAT='best[height<=720]/best'
+
+run_dl() {
+  yt-dlp \
+    --no-playlist \
+    --no-warnings \
+    --no-progress \
+    --merge-output-format mp4 \
+    -f "$FORMAT" \
+    -o "$OUT" \
+    "$@" \
+    "$URL" >&2
+}
+
+# Tier 1: anonymous. Public videos succeed here.
+if run_dl 2>/tmp/dl-video.last.log; then
+  if [[ -s "$OUT" ]]; then
+    echo "$OUT"
+    exit 0
+  fi
+fi
+
+# Tier 3: caller passed --cookies file. Skip browser autodetect.
+if [[ -n "$COOKIES_FILE" ]]; then
+  echo "[dl-video] anonymous fetch failed, retrying with $COOKIES_FILE…" >&2
+  if [[ ! -f "$COOKIES_FILE" ]]; then
+    echo "[dl-video] cookies file not found: $COOKIES_FILE" >&2
+    exit 1
+  fi
+  if run_dl --cookies "$COOKIES_FILE"; then
+    if [[ -s "$OUT" ]]; then
+      echo "$OUT"
+      exit 0
+    fi
+  fi
+  echo "[dl-video] failed even with provided cookies" >&2
+  exit 1
+fi
+
+# Tier 2: auto-detect signed-in browser.
+# Order: Chrome → Firefox → Safari → Edge → Brave → Chromium.
+# Override via env: WATCH_BROWSER=firefox.
+declare -a BROWSERS
+if [[ -n "${WATCH_BROWSER:-}" ]]; then
+  BROWSERS=("$WATCH_BROWSER")
+else
+  BROWSERS=(chrome firefox safari edge brave chromium)
+fi
+
+for BROWSER in "${BROWSERS[@]}"; do
+  echo "[dl-video] anonymous fetch failed, retrying with $BROWSER cookies…" >&2
+  if run_dl --cookies-from-browser "$BROWSER" 2>/tmp/dl-video.last.log; then
+    if [[ -s "$OUT" ]]; then
+      echo "$OUT"
+      exit 0
+    fi
+  fi
+done
+
+# Tier 4: graceful error with actionable guidance.
+cat >&2 <<'ERR'
+[dl-video] Could not download — this video appears to require authentication.
+
+Three ways to fix:
+  1. Sign in to the platform in Chrome (or Firefox/Safari/Edge), then re-run.
+     watch-cli auto-reads cookies from any signed-in browser.
+
+  2. Export cookies.txt (Netscape format) and pass:
+       watch-cli <url> --cookies ~/path/to/cookies.txt
+     See https://github.com/sonpiaz/watch-cli/blob/main/docs/cookies.md
+
+  3. Try a public URL — most YouTube, TikTok, and Reddit videos
+     work without cookies.
+ERR
+exit 1

@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# transcribe <audio-or-video> [language]
+# Speech-to-text on any media file. Prints the transcript to stdout.
+# Auto-extracts audio from video and downsamples to mono 16kHz mp3 first.
+#
+# Routing:
+#   - Kyma mode (KYMA_API_KEY set): POST api.kymaapi.com/v1/audio/transcriptions
+#     One key opens every gate. Free credit at signup covers hundreds of videos.
+#     Get a Kyma key at https://kymaapi.com.
+#   - Direct mode (GROQ_API_KEY set): POST api.groq.com directly (BYO).
+
+set -euo pipefail
+
+# Locate self → parent dir → lib/env.sh.
+SELF="${BASH_SOURCE[0]}"
+SELF_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+ROOT_DIR="$(cd "$SELF_DIR/.." && pwd)"
+# shellcheck source=../lib/env.sh
+source "$ROOT_DIR/lib/env.sh"
+
+INPUT="${1:-}"
+LANG="${2:-}"
+
+if [[ -z "$INPUT" || ! -f "$INPUT" ]]; then
+  echo "usage: transcribe <audio-or-video> [language]" >&2
+  exit 64
+fi
+
+watch_cli_audio_mode_check "transcribe" || exit 1
+
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "[transcribe] ffmpeg required for audio extraction. Install:" >&2
+  echo "  brew install ffmpeg   # macOS" >&2
+  exit 1
+fi
+
+# Always normalize to mono 16kHz mp3 — both Kyma and Groq accept it, and
+# this keeps payloads under 25MB even for ~30min sources.
+HASH="$(echo -n "$INPUT" | shasum | cut -c1-10)"
+AUDIO="/tmp/transcribe_${HASH}.mp3"
+
+if [[ ! -s "$AUDIO" ]]; then
+  ffmpeg -hide_banner -loglevel error -y -i "$INPUT" \
+    -vn -ac 1 -ar 16000 -b:a 32k -f mp3 "$AUDIO" 2>&1 >&2 || {
+    echo "[transcribe] ffmpeg audio extraction failed" >&2
+    exit 1
+  }
+fi
+
+SIZE=$(stat -f%z "$AUDIO" 2>/dev/null || stat -c%s "$AUDIO")
+if (( SIZE > 25 * 1024 * 1024 )); then
+  echo "[transcribe] audio is $((SIZE / 1024 / 1024))MB — exceeds 25MB cap. Trim source first." >&2
+  exit 1
+fi
+
+case "$WATCH_AUDIO_MODE" in
+  kyma)
+    ARGS=(
+      -F "file=@$AUDIO"
+      -F "model=whisper-v3-turbo"
+      -F "response_format=text"
+    )
+    [[ -n "$LANG" ]] && ARGS+=(-F "language=$LANG")
+    curl -sS -X POST \
+      -H "Authorization: Bearer $KYMA_API_KEY" \
+      "${ARGS[@]}" \
+      "$WATCH_KYMA_BASE/v1/audio/transcriptions"
+    ;;
+  direct|groq-only)
+    ARGS=(
+      -F "file=@$AUDIO"
+      -F "model=whisper-large-v3-turbo"
+      -F "response_format=text"
+    )
+    [[ -n "$LANG" ]] && ARGS+=(-F "language=$LANG")
+    curl -sS -X POST \
+      -H "Authorization: Bearer $GROQ_API_KEY" \
+      "${ARGS[@]}" \
+      https://api.groq.com/openai/v1/audio/transcriptions
+    ;;
+esac
+echo
