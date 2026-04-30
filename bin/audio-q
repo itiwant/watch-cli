@@ -58,10 +58,12 @@ DUR_SEC=$(ffprobe -v error -show_entries format=duration \
 
 case "$WATCH_AUDIO_MODE" in
   kyma)
+    # Use the "audio-understand" alias rather than a concrete SKU.
+    # Kyma can swap the underlying model without breaking watch-cli.
     RESP="$(curl -sS -X POST \
       -H "Authorization: Bearer $KYMA_API_KEY" \
       -F "file=@$AUDIO;type=audio/mpeg" \
-      -F "model=gemini-3-flash-audio" \
+      -F "model=audio-understand" \
       -F "question=$QUESTION" \
       -F "duration_sec=$DUR_SEC" \
       "$WATCH_KYMA_BASE/v1/audio/understand")"

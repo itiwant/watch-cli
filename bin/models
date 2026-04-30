@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# models [--all]
+# Lists models available on Kyma. Pulls live from the registry — no
+# hardcoded list, so when Kyma adds or kills a SKU it shows up here
+# automatically.
+#
+# Default: show audio models (transcribe + understand) — what watch-cli
+# actually uses.
+# --all: show every active SKU on Kyma (text + image + video + audio).
+
+set -euo pipefail
+
+SELF="${BASH_SOURCE[0]}"
+SELF_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+ROOT_DIR="$(cd "$SELF_DIR/.." && pwd)"
+# shellcheck source=../lib/env.sh
+source "$ROOT_DIR/lib/env.sh"
+
+SHOW_ALL=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --all|-a) SHOW_ALL=1; shift ;;
+    -h|--help)
+      sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *) shift ;;
+  esac
+done
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "[models] jq required. brew install jq / apt install jq" >&2
+  exit 1
+fi
+
+# Endpoint is public (no auth needed) — lists registry without exposing
+# anything user-specific.
+BASE="${WATCH_KYMA_BASE:-https://api.kymaapi.com}"
+URL="$BASE/v1/models"
+
+RAW="$(curl -fsS "$URL" 2>&1)" || {
+  echo "[models] could not reach Kyma at $BASE" >&2
+  echo "[models] check your internet, or set WATCH_KYMA_BASE if self-hosting" >&2
+  exit 1
+}
+
+# Default: only dedicated audio SKUs (pricing_mode=per-minute) — these are
+# what watch-cli scripts actually use. --all overrides to show every SKU.
+# Filter client-side so we hit one cached endpoint and output stays fresh.
+if (( SHOW_ALL )); then
+  RESP="$RAW"
+else
+  RESP="$(echo "$RAW" | jq '. | .data |= map(select(.pricing_mode == "per-minute" or .pricing.mode == "per-minute"))')"
+fi
+
+# Empty-state guard for the audio default — server may not have rolled out
+# audio endpoints yet (PR pending), surface a useful hint instead of "0 models".
+if (( SHOW_ALL == 0 )); then
+  COUNT="$(echo "$RESP" | jq -r '.data | length')"
+  if [[ "$COUNT" == "0" ]]; then
+    echo "No dedicated audio models live on Kyma yet."
+    echo
+    echo "Tip: run \`watch-cli models --all\` to see every Kyma SKU."
+    echo "Audio endpoints (transcribe + understand) ship with the next Kyma release."
+    if [[ -z "${KYMA_API_KEY:-}" ]]; then
+      echo
+      echo "Get a Kyma key at https://kymaapi.com — one key opens every gate."
+    fi
+    exit 0
+  fi
+fi
+
+# Format models as a table. Columns: id | provider | quality | release | pricing.
+# Field names come from /v1/models response: owned_by (provider), quality_tier,
+# release_stage, pricing.{mode,input,output,per_image_usd,per_second_usd}.
+echo "$RESP" | jq -r '
+  ([.data[] | {
+    id: .id,
+    provider: (.owned_by // ""),
+    quality: (.quality_tier // ""),
+    release: (.release_stage // "stable"),
+    mode: (.pricing.mode // "per-token"),
+    pricing: (
+      if .pricing.mode == "per-image" then "$\(.pricing.per_image_usd)/img"
+      elif .pricing.mode == "per-second" then "$\(.pricing.per_second_usd)/s"
+      elif .pricing.mode == "per-minute" then "$\(.pricing.per_minute_usd // .pricing.input)/min"
+      else "$\(.pricing.input)/M in · $\(.pricing.output)/M out"
+      end
+    )
+  }] | sort_by(.mode + .id)) as $rows
+  | "\($rows | length) model\(if ($rows | length) == 1 then "" else "s" end) on Kyma:\n"
+  , (
+      $rows[] |
+      "  \(.id | tostring | .[0:24] | . + (" " * (24 - length))) " +
+      "\(.provider | tostring | .[0:11] | . + (" " * (11 - length))) " +
+      "\(.quality | tostring | .[0:15] | . + (" " * (15 - length))) " +
+      "\(.release | tostring | .[0:8] | . + (" " * (8 - length))) " +
+      "\(.pricing)"
+    )
+'
+
+# Show alias map underneath when audio-only view (the watch-cli scripts
+# actually call the aliases, so users need to see them).
+if (( SHOW_ALL == 0 )); then
+  ALIASES="$(echo "$RESP" | jq -r '.aliases // {} | to_entries[] | select(.value as $v | (.value == "whisper-v3-turbo" or .value == "gemini-3-flash-audio")) | "  \(.key | tostring | . + (" " * (18 - length))) → \(.value)"')"
+  if [[ -n "$ALIASES" ]]; then
+    echo
+    echo "Aliases (use these, not the raw SKU IDs):"
+    echo "$ALIASES"
+  fi
+fi
+
+# Footer hint.
+if [[ -z "${KYMA_API_KEY:-}" ]]; then
+  echo
+  echo "Get a Kyma key at https://kymaapi.com — one key opens every gate."
+fi

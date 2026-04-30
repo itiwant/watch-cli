@@ -52,7 +52,7 @@ green "✓ watch-cli installed at $INSTALL_DIR"
 
 # ── Symlink bins ──
 mkdir -p "$BIN_LINK_DIR"
-for bin in watch dl-video extract-frames transcribe audio-q; do
+for bin in watch dl-video extract-frames transcribe audio-q models; do
   ln -sf "$INSTALL_DIR/bin/$bin" "$BIN_LINK_DIR/$bin"
 done
 green "✓ Symlinked binaries to $BIN_LINK_DIR"

@@ -130,7 +130,19 @@ transcribe <audio-or-video> [language]
 audio-q <audio-or-video> "<question>"
   Audio scene Q&A — tone, music, SFX, language, emotion.
   Beyond pure transcription.
+
+models [--all]
+  List audio models available on Kyma (live, no hardcoded list).
+  --all to see every Kyma SKU (text + image + video + audio).
 ```
+
+### How `transcribe` and `audio-q` stay current
+
+The scripts call Kyma using the `transcribe` and `audio-understand` aliases,
+not raw model IDs. When Kyma swaps the underlying model (Whisper v4,
+Voxtral, a faster ASR), watch-cli keeps working without an update — the
+alias points to whichever model is current. Run `watch-cli models` any time
+to see what's behind the alias today.
 
 ---
 

@@ -55,9 +55,11 @@ fi
 
 case "$WATCH_AUDIO_MODE" in
   kyma)
+    # Use the "transcribe" alias rather than a concrete SKU. Lets Kyma swap
+    # the underlying model (Whisper v4, Voxtral, …) without breaking watch-cli.
     ARGS=(
       -F "file=@$AUDIO"
-      -F "model=whisper-v3-turbo"
+      -F "model=transcribe"
       -F "response_format=text"
     )
     [[ -n "$LANG" ]] && ARGS+=(-F "language=$LANG")
