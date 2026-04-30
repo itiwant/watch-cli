@@ -53,6 +53,20 @@ if (( SIZE > 25 * 1024 * 1024 )); then
   exit 1
 fi
 
+# Silence guard: ASR models hallucinate on silent input ("Thank you" is a
+# common Whisper failure mode). Skip the provider call entirely so we
+# never return fabricated text. -60 dB is well below room noise; anything
+# below that is effectively digital silence.
+MAX_DB="$(ffmpeg -i "$AUDIO" -af volumedetect -f null /dev/null 2>&1 | \
+          awk -F': ' '/max_volume/ { gsub(" dB", "", $2); print $2; exit }')"
+if [[ -n "$MAX_DB" ]]; then
+  IS_SILENT="$(awk -v v="$MAX_DB" 'BEGIN { print (v < -60.0) ? 1 : 0 }')"
+  if [[ "$IS_SILENT" == "1" ]]; then
+    echo "[transcribe] audio is silent (max_volume ${MAX_DB} dB). No transcript." >&2
+    exit 0
+  fi
+fi
+
 case "$WATCH_AUDIO_MODE" in
   kyma)
     # Use the "transcribe" alias rather than a concrete SKU. Lets Kyma swap

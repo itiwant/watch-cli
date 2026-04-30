@@ -52,6 +52,20 @@ if (( SIZE > 19 * 1024 * 1024 )); then
   exit 1
 fi
 
+# Silence guard: multimodal LLMs hallucinate plausible-sounding scene
+# descriptions on silent input rather than reporting "no audio". Skip
+# the provider call so we never return fabricated tone/music/voice.
+MAX_DB="$(ffmpeg -i "$AUDIO" -af volumedetect -f null /dev/null 2>&1 | \
+          awk -F': ' '/max_volume/ { gsub(" dB", "", $2); print $2; exit }')"
+if [[ -n "$MAX_DB" ]]; then
+  IS_SILENT="$(awk -v v="$MAX_DB" 'BEGIN { print (v < -60.0) ? 1 : 0 }')"
+  if [[ "$IS_SILENT" == "1" ]]; then
+    echo "[audio-q] audio is silent (max_volume ${MAX_DB} dB). The video has no audible content to analyze." >&2
+    echo "(silent audio: ${MAX_DB} dB)"
+    exit 0
+  fi
+fi
+
 # Audio duration for Kyma billing hint (rounded up to int seconds).
 DUR_SEC=$(ffprobe -v error -show_entries format=duration \
             -of default=nw=1:nk=1 "$AUDIO" 2>/dev/null | awk '{ printf "%d", ($1 + 1) }')
