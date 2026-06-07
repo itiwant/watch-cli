@@ -4,7 +4,7 @@ Hướng dẫn này giúp bạn cấu hình và sử dụng **Watch CLI** như m
 
 ## Tổng quan
 
-Watch CLI là công cụ theo dõi thời gian thực cho nhiều nguồn dữ liệu (giá crypto, chứng khoán, thời tiết, system metrics). Khi tích hợp vào Hermes Agent, nó trở thành một skill mạnh mẽ để giám sát và cảnh báo tự động.
+Watch CLI là công cụ phân tích video tự động dành cho AI agent. Nó kết hợp `yt-dlp` + `ffmpeg` + Whisper-class ASR để trích xuất khung hình (frames) và tạo phụ đề (transcript) từ video trên các nền tảng mạng xã hội như YouTube, X/Twitter, LinkedIn, TikTok, Vimeo, Reddit, Facebook. Khi tích hợp vào Hermes Agent, nó trở thành một skill mạnh mẽ để "xem" và phân tích video tự động.
 
 ## Cách 1: Cài đặt như một External Tool
 
@@ -30,13 +30,8 @@ tools:
   watch-cli:
     enabled: true
     path: "/path/to/watch-cli/bin/watch"
-    commands:
-      - crypto
-      - stock
-      - weather
-      - system
-    default_interval: 5s
-    max_retries: 3
+    default_frames: 8
+    max_frames: 64
 ```
 
 Hoặc định dạng JSON:
@@ -47,9 +42,8 @@ Hoặc định dạng JSON:
     "watch-cli": {
       "enabled": true,
       "path": "/usr/local/bin/watch",
-      "commands": ["crypto", "stock", "weather", "system"],
-      "default_interval": "5s",
-      "max_retries": 3
+      "default_frames": 8,
+      "max_frames": 64
     }
   }
 }
@@ -63,75 +57,39 @@ Tạo file manifest để Hermes Agent nhận diện skill:
 # skills/watch-cli/manifest.yaml
 name: watch-cli
 version: 1.0.0
-description: Real-time monitoring tool for crypto, stocks, weather, and system metrics
+description: Video analysis tool that extracts frames and generates transcripts from social media videos
 author: Watch CLI Team
 
 entry_point: /usr/local/bin/watch
 
 commands:
-  - name: crypto
-    description: Track cryptocurrency prices in real-time
+  - name: analyze
+    description: Analyze a video URL to extract frames and generate transcript
     parameters:
-      - name: symbol
+      - name: url
         type: string
         required: true
-        description: Cryptocurrency symbol (e.g., BTC, ETH)
-      - name: interval
-        type: duration
+        format: uri
+        description: A social video URL (YouTube, X/Twitter, LinkedIn, TikTok, Vimeo, Reddit, Facebook)
+      - name: frames
+        type: integer
         required: false
-        default: 5s
-        description: Update interval
-      - name: currency
-        type: string
-        required: false
-        default: USD
-        description: Fiat currency for price display
-
-  - name: stock
-    description: Monitor stock prices
-    parameters:
-      - name: symbol
-        type: string
-        required: true
-        description: Stock ticker symbol (e.g., AAPL, GOOGL)
-      - name: interval
-        type: duration
-        required: false
-        default: 10s
-
-  - name: weather
-    description: Track weather conditions
-    parameters:
-      - name: city
-        type: string
-        required: true
-        description: City name
-      - name: interval
-        type: duration
-        required: false
-        default: 60s
-
-  - name: system
-    description: Monitor system resources (CPU, RAM, Disk)
-    parameters:
-      - name: interval
-        type: duration
-        required: false
-        default: 2s
-      - name: metrics
-        type: array
-        required: false
-        description: Specific metrics to monitor
+        default: 8
+        minimum: 1
+        maximum: 64
+        description: Number of evenly-spaced frames to extract from the video
 
 capabilities:
-  - real-time-monitoring
-  - alert-thresholds
-  - multi-source-support
+  - video-download
+  - frame-extraction
+  - speech-to-text
+  - multi-platform-support
+  - cookie-authentication
   - offline-mode
 
 rate_limits:
-  requests_per_minute: 60
-  concurrent_watches: 10
+  requests_per_minute: 30
+  max_frames: 64
 ```
 
 ## Cách 2: Tích hợp như MCP Server (Model Context Protocol)
@@ -167,88 +125,58 @@ hermes-agent --config hermes.config.yaml
 
 ## Sử dụng Watch CLI Skill trong Hermes Agent
 
-### Ví dụ 1: Theo dõi giá Bitcoin
+### Ví dụ 1: Phân tích video YouTube về lập trình
 
 ```
-User: Theo dõi giá BTC cho tôi
-Hermes: [Sử dụng watch-cli crypto] Đang theo dõi BTC/USD...
+User: Phân tích video này cho tôi: https://youtube.com/watch?v=abc123
+Hermes: [Sử dụng watch-cli analyze] Đang tải video và trích xuất khung hình...
 
-BTC/USD: $67,234.50 (+2.34%) 📈
-Cập nhật: 2024-01-15 10:30:45
-Biến động 24h: +$1,532.10
+📹 Video Analysis Complete
+- Frames extracted: 8
+- Duration: 12:34
+- Transcript: 1,523 words
+- Language: English
+
+Key topics detected: React hooks, component lifecycle, state management
 ```
 
-### Ví dụ 2: Giám sát cổ phiếu Apple
+### Ví dụ 2: Trích xuất kiến trúc hệ thống từ video tech talk
 
 ```
-User: Giám sát AAPL mỗi 10 giây
-Hermes: [Sử dụng watch-cli stock] Đã thiết lập giám sát AAPL...
+User: Trích xuất architecture diagram từ video: https://twitter.com/techconf/status/456789
+Hermes: [Sử dụng watch-cli analyze --frames 16] Đang phân tích video...
 
-AAPL: $185.92 (+0.87%) 📈
-Cập nhật: 2024-01-15 10:31:00
-Volume: 52.3M
-Market Cap: $2.89T
+🏗️ Architecture Diagram Extracted
+- Components identified: API Gateway, Microservices, Database Cluster
+- Data flow: Request → Gateway → Service A → DB
+- Transcript available: Yes (2,341 words)
 ```
 
-### Ví dụ 3: Theo dõi thời tiết
+### Ví dụ 3: Tạo phụ đề cho video TikTok
 
 ```
-User: Thời tiết Hà Nội thế nào?
-Hermes: [Sử dụng watch-cli weather] Đang lấy dữ liệu thời tiết...
+User: Tạo transcript cho video TikTok: https://tiktok.com/@user/video/789012
+Hermes: [Sử dụng watch-cli analyze] Đang xử lý video...
 
-🌤️ Hà Nội, VN
-Nhiệt độ: 28°C (82°F)
-Độ ẩm: 75%
-Gió: 12 km/h NE
-Cập nhật: 2024-01-15 10:31:15
+📝 Transcript Generated
+- Duration: 0:58
+- Words: 145
+- Language: Vietnamese
+- Confidence: 94.2%
 ```
 
-### Ví dụ 4: Giám sát hệ thống
+### Ví dụ 4: Phân tích video hướng dẫn UI/UX
 
 ```
-User: Giám sát tài nguyên hệ thống
-Hermes: [Sử dụng watch-cli system] Đang theo dõi system metrics...
+User: Phân tích UX pattern từ video: https://vimeo.com/123456789
+Hermes: [Sử dụng watch-cli analyze --frames 12] Đang trích xuất frames...
 
-💻 System Metrics
-CPU: 45.2% | RAM: 8.4GB/16GB (52.5%) | Disk: 120GB/500GB (24%)
-Cập nhật: 2024-01-15 10:31:30
+🎨 UX Analysis Ready
+- Frames: 12 key moments captured
+- Interactions detected: swipe, tap, scroll animations
+- Transcript: Full narration transcribed
+- Suggested artifact: React component with Framer Motion
 ```
-
-## Thiết lập Alert và Ngưỡng cảnh báo
-
-Hermes Agent có thể tự động cảnh báo khi đạt ngưỡng:
-
-```yaml
-# alerts.yaml
-alerts:
-  - name: btc_price_alert
-    tool: watch-cli
-    command: crypto
-    condition: "price > 70000 OR price < 60000"
-    notification:
-      type: slack
-      channel: "#crypto-alerts"
-
-  - name: high_cpu_alert
-    tool: watch-cli
-    command: system
-    condition: "cpu_usage > 90"
-    notification:
-      type: email
-      recipients:
-        - admin@example.com
-```
-
-## Các lệnh thường dùng
-
-| Lệnh | Mô tả | Ví dụ |
-|------|-------|-------|
-| `watch crypto <symbol>` | Theo dõi crypto | `watch crypto BTC` |
-| `watch stock <symbol>` | Theo dõi chứng khoán | `watch stock AAPL` |
-| `watch weather <city>` | Theo dõi thời tiết | `watch weather Hanoi` |
-| `watch system` | Giám sát hệ thống | `watch system` |
-| `watch stop` | Dừng tất cả watch | `watch stop` |
-| `watch list` | Liệt kê đang theo dõi | `watch list` |
 
 ## Xử lý lỗi thường gặp
 
@@ -261,32 +189,46 @@ hermes.config.yaml:
       path: "/usr/local/bin/watch"  # Đảm bảo path đúng
 ```
 
-### Lỗi: Rate limit exceeded
+### Lỗi: Invalid video URL
 ```
-Solution: Giảm tần suất request hoặc tăng rate_limit
-tools:
-  watch-cli:
-    rate_limits:
-      requests_per_minute: 30
+Solution: Đảm bảo URL là từ nền tảng được hỗ trợ
+Hỗ trợ: YouTube, X/Twitter, LinkedIn, TikTok, Vimeo, Reddit, Facebook
 ```
 
-### Lỗi: API key invalid
+### Lỗi: Download failed (tag=download-auth)
 ```
-Solution: Cập nhật API key trong biến môi trường
-export WATCH_CLI_API_KEY=your_new_key
+Solution: Video yêu cầu đăng nhập. Cấu hình cookies:
+- Watch CLI tự động lấy cookies từ browser đã đăng nhập
+- Hoặc export cookies manually và đặt vào thư mục ~/.watch-cli/cookies/
+```
+
+### Lỗi: Transcript null (exit_code=4)
+```
+Solution: ASR model không tạo được transcript (video không có audio hoặc language không supported)
+- Kiểm tra video có audio không
+- Frames vẫn được trích xuất bình thường, chỉ transcript = null
 ```
 
 ## Best Practices
 
-1. **Giới hạn số lượng watch đồng thời**: Không nên theo dõi quá 10 nguồn cùng lúc
-2. **Sử dụng interval hợp lý**: 
-   - Crypto: 5-10s
-   - Stock: 10-30s
-   - Weather: 60s+
-   - System: 2-5s
-3. **Enable offline mode** khi không cần dữ liệu real-time
+1. **Chọn số frames hợp lý**: 
+   - Video ngắn (< 2 phút): 4-8 frames
+   - Video trung bình (2-10 phút): 8-16 frames
+   - Video dài (> 10 phút): 16-32 frames
+   - Tối đa: 64 frames
+
+2. **Sử dụng cookie authentication** cho video yêu cầu đăng nhập (LinkedIn, private X, FB)
+
+3. **Enable offline mode** khi cần phân tích lại video đã tải
+
 4. **Lưu logs** để debug và audit
-5. **Thiết lập alert thresholds** phù hợp để tránh spam thông báo
+
+5. **Kết hợp với prompts** trong thư mục `prompts/` để tạo artifact cụ thể:
+   - implement-from-video.md → code project
+   - extract-architecture.md → architecture diagram
+   - clone-ux.md → React component
+   - paper-to-code.md → runnable notebook
+   - tutorial-walkthrough.md → step-by-step guide
 
 ## Tài liệu tham khảo
 
@@ -300,8 +242,9 @@ export WATCH_CLI_API_KEY=your_new_key
 Nếu gặp vấn đề khi tích hợp:
 1. Kiểm tra logs của Hermes Agent
 2. Chạy `watch --version` để xác minh cài đặt
-3. Test độc lập trước khi tích hợp: `watch crypto BTC`
-4. Xem [GitHub Issues](https://github.com/your-org/watch-cli/issues)
+3. Test độc lập trước khi tích hợp: `watch https://youtube.com/watch?v=dQw4w9WgXcQ`
+4. Đọc [README.md](../README.md) để biết danh sách nền tảng được hỗ trợ
+5. Xem [GitHub Issues](https://github.com/sonpiaz/watch-cli/issues)
 
 ---
 
