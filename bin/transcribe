@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# transcribe <audio-or-video> [language]
+# transcribe <audio-or-video> [language] [--model <model-name>]
 # Speech-to-text on any media file. Prints the transcript to stdout.
 # Auto-extracts audio from video and downsamples to mono 16kHz mp3 first.
 #
@@ -20,6 +20,13 @@
 #   (unset)                Auto-detect: prefers local > kyma > byok.
 #                          Local wins when both binary and model are
 #                          present.
+#
+# Model selection (for byok/kyma modes, priority order):
+#   1. --model <model-name> flag (explicit override for this call)
+#   2. WATCH_AUDIO_MODEL env var (default model for transcribe)
+#   3. Built-in defaults:
+#      - byok mode: whisper-large-v3-turbo
+#      - kyma mode: transcribe (alias, server-side routing)
 #
 # An explicit WATCH_AUDIO_MODE is a contract — the script never falls
 # back to a different path. See docs/offline-mode.md for the full
@@ -45,16 +52,25 @@ source "$ROOT_DIR/lib/audio-routing.sh"
 
 INPUT=""
 LANG=""
+MODEL=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)
-      sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     -V|--version)
       echo "$WATCH_CLI_VERSION_STRING"
       exit 0
+      ;;
+    --model)
+      if [[ -z "${2:-}" ]]; then
+        echo '[transcribe] error: --model requires a value tag=usage-error' >&2
+        exit 64
+      fi
+      MODEL="$2"
+      shift 2
       ;;
     *)
       if [[ -z "$INPUT" ]]; then
@@ -173,11 +189,14 @@ case "$WATCH_AUDIO_RESOLVED_MODE" in
     echo "$TEXT"
     ;;
   kyma)
+    # Resolve model: --model flag > WATCH_AUDIO_MODEL env > default alias
+    AUDIO_MODEL="${MODEL:-${WATCH_AUDIO_MODEL:-transcribe}}"
+    
     # Use the "transcribe" alias rather than a concrete SKU. Lets Kyma swap
     # the underlying model (Whisper v4, Voxtral, …) without breaking watch-cli.
     ARGS=(
       -F "file=@$AUDIO"
-      -F "model=transcribe"
+      -F "model=$AUDIO_MODEL"
       -F "response_format=text"
     )
     [[ -n "$LANG" ]] && ARGS+=(-F "language=$LANG")
@@ -212,9 +231,12 @@ case "$WATCH_AUDIO_RESOLVED_MODE" in
     esac
     ;;
   byok)
+    # Resolve model: --model flag > WATCH_AUDIO_MODEL env > default
+    AUDIO_MODEL="${MODEL:-${WATCH_AUDIO_MODEL:-whisper-large-v3-turbo}}"
+    
     ARGS=(
       -F "file=@$AUDIO"
-      -F "model=whisper-large-v3-turbo"
+      -F "model=$AUDIO_MODEL"
       -F "response_format=text"
     )
     [[ -n "$LANG" ]] && ARGS+=(-F "language=$LANG")

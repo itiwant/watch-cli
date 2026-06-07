@@ -208,25 +208,39 @@ dl-video <url> [out-dir] [--cookies <file>]
 extract-frames <video> [count] [out-dir]
   Pull N evenly-spaced JPG frames. Default 8.
 
-transcribe <audio-or-video> [language]
+transcribe <audio-or-video> [language] [--model <model-name>]
   Speech-to-text. Auto-extracts audio from video first.
+  Model selection (priority): --model flag > WATCH_AUDIO_MODEL env > backend default.
 
-audio-q <audio-or-video> "<question>"
+audio-q <audio-or-video> "<question>" [--model <model-name>]
   Audio scene Q&A — tone, music, SFX, language, emotion.
   Beyond pure transcription.
+  Model selection (priority): --model flag > WATCH_AUDIO_MODEL env > backend default.
 
 models [--all]
   List audio models available on Kyma (live, no hardcoded list).
   --all to see every Kyma SKU (text + image + video + audio).
 ```
 
-### How `transcribe` and `audio-q` stay current
+### Model selection for AI agents
 
-The scripts call Kyma using the `transcribe` and `audio-understand` aliases,
-not raw model IDs. When Kyma swaps the underlying model (Whisper v4,
-Voxtral, a faster ASR), watch-cli keeps working without an update — the
-alias points to whichever model is current. Run `watch-cli models` any time
-to see what's behind the alias today.
+Both `transcribe` and `audio-q` support flexible model selection, making them suitable as AI agent tools:
+
+1. **Direct parameter** (recommended for agents): `--model <model-name>`
+   - Explicitly specify the model per call
+   - Example: `transcribe file.mp3 vi --model whisper-large-v3`
+   - Example: `audio-q file.mp3 "What's the mood?" --model gemini-2.0-flash`
+
+2. **Environment variable**: `WATCH_AUDIO_MODEL`
+   - Set a default model for all calls in a session
+   - Example: `export WATCH_AUDIO_MODEL=whisper-large-v3-turbo`
+
+3. **Backend defaults** (fallback):
+   - `transcribe` in kyma mode: `transcribe` (alias)
+   - `transcribe` in byok mode: `whisper-large-v3-turbo`
+   - `audio-q` in direct mode: `gemini-2.5-flash`
+
+This design lets your agent dynamically choose models based on task requirements without code changes.
 
 ---
 
@@ -297,10 +311,10 @@ cp -r skills/watch-cli ~/.claude/skills/
 URL ──▶ yt-dlp ──▶ video.mp4 ──┬──▶ ffmpeg ──▶ frames/*.jpg
                                 │
                                 └──▶ ffmpeg ──▶ audio.mp3 ──┬──▶ Kyma /v1/audio/transcriptions
-                                                            │     (Whisper Large v3 Turbo, 228× realtime)
+                                                            │     (model: transcribe alias or --model)
                                                             │
                                                             └──▶ Kyma /v1/audio/understand
-                                                                  (Gemini 3 Flash audio — tone/music/SFX)
+                                                                  (model: audio-understand alias or --model)
 ```
 
 Each step is a primitive. None of them needs a vision LLM.
@@ -340,7 +354,7 @@ path is available — see `.env.example`.
 - Talking-head content: tutorials, conference talks, lectures, walkthroughs
 - Architecture and system diagrams shown for at least 3 seconds
 - Code that stays on screen long enough to read
-- ~95 languages (anything Whisper v3 turbo supports)
+- ~95 languages (anything Whisper-class ASR supports)
 
 ### What works poorly
 

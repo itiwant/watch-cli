@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# audio-q <audio-or-video> "<question>"
+# audio-q <audio-or-video> "<question>" [--model <model-name>]
 # Asks a multimodal LLM a question about an audio/video file. Goes beyond
 # pure speech-to-text: hears tone, music, ambient SFX, speaker emotion,
 # language, pacing — the full audio scene.
@@ -8,6 +8,11 @@
 #   - Kyma mode (KYMA_API_KEY set): POST api.kymaapi.com/v1/audio/understand
 #     Get a Kyma key at https://kymaapi.com.
 #   - Direct mode (GOOGLE_AI_KEY set): POST Gemini API directly (BYO).
+#
+# Model selection (priority order):
+#   1. --model <model-name> flag (explicit override for this call)
+#   2. WATCH_AUDIO_MODEL env var (default model for audio-q)
+#   3. Built-in default: gemini-2.5-flash (for direct mode)
 #
 # Exit codes (see docs/exit-codes.md):
 #   0 success · 1 general · 2 missing-dep · 4 transcribe fail · 64 usage error
@@ -28,16 +33,25 @@ source "$ROOT_DIR/lib/env.sh"
 
 INPUT=""
 QUESTION=""
+MODEL=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)
-      sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     -V|--version)
       echo "$WATCH_CLI_VERSION_STRING"
       exit 0
+      ;;
+    --model)
+      if [[ -z "${2:-}" ]]; then
+        echo '[audio-q] error: --model requires a value tag=usage-error' >&2
+        exit 64
+      fi
+      MODEL="$2"
+      shift 2
       ;;
     *)
       if [[ -z "$INPUT" ]]; then
@@ -122,6 +136,9 @@ DUR_SEC=$(ffprobe -v error -show_entries format=duration \
 
 case "$WATCH_AUDIO_MODE" in
   kyma)
+    # Resolve model: --model flag > WATCH_AUDIO_MODEL env > default alias
+    AUDIO_MODEL="${MODEL:-${WATCH_AUDIO_MODEL:-audio-understand}}"
+    
     # Use the "audio-understand" alias rather than a concrete SKU.
     # Kyma can swap the underlying model without breaking watch-cli.
     BODY="$(curl -sS -X POST \
@@ -131,7 +148,7 @@ case "$WATCH_AUDIO_MODE" in
       -H "Authorization: Bearer $KYMA_API_KEY" \
       -H "User-Agent: $WATCH_CLI_USER_AGENT" \
       -F "file=@$AUDIO;type=audio/mpeg" \
-      -F "model=audio-understand" \
+      -F "model=$AUDIO_MODEL" \
       -F "question=$QUESTION" \
       -F "duration_sec=$DUR_SEC" \
       "$WATCH_KYMA_BASE/v1/audio/understand" 2>/dev/null)" || {
@@ -163,11 +180,16 @@ case "$WATCH_AUDIO_MODE" in
     ;;
 
   direct)
+    # Resolve model: --model flag > WATCH_AUDIO_MODEL env > default
+    AUDIO_MODEL="${MODEL:-${WATCH_AUDIO_MODEL:-gemini-2.5-flash}}"
+    
     B64="$(base64 < "$AUDIO" | tr -d '\n')"
     REQ_BODY="$(jq -n \
       --arg q "$QUESTION" \
       --arg data "$B64" \
+      --arg model "$AUDIO_MODEL" \
       '{
+        model: $model,
         contents: [{
           parts: [
             { inline_data: { mime_type: "audio/mp3", data: $data } },
@@ -185,7 +207,7 @@ case "$WATCH_AUDIO_MODE" in
       -H "x-goog-api-key: $GOOGLE_AI_KEY" \
       -H "User-Agent: $WATCH_CLI_USER_AGENT" \
       -d "$REQ_BODY" \
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" 2>/dev/null)" || {
+      "https://generativelanguage.googleapis.com/v1beta/models/${AUDIO_MODEL}:generateContent" 2>/dev/null)" || {
       echo "[audio-q] error: Gemini request failed tag=transcribe-other" >&2
       exit 4
     }
