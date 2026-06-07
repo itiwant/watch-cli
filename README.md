@@ -75,9 +75,8 @@ polished, human-readable summary. If you're feeding an AI agent, that's the
 wrong artifact — agents need raw frames and the full transcript to reason
 for themselves, not someone else's pre-digested recap.
 
-A typical research session is 1–3 videos, not 100. Through Kyma — the default
-backend — a 1-hour video costs **~$0.05** (transcribe is the only paid step;
-frame extraction is local ffmpeg).
+A typical research session is 1–3 videos, not 100. A 1-hour video costs
+**~$0.05** (transcribe is the only paid step; frame extraction is local ffmpeg).
 
 | This month you watch | You pay |
 |---|---|
@@ -85,8 +84,7 @@ frame extraction is local ffmpeg).
 | 1 one-hour video | ~$0.05 |
 | 100 one-hour videos | ~$5 |
 
-No monthly minimum, no seat license, no lock-in. The free credit at Kyma
-signup is enough to run the full pipeline end-to-end before you spend a cent.
+No monthly minimum, no seat license, no lock-in.
 
 ---
 
@@ -162,37 +160,11 @@ sudo apt install yt-dlp ffmpeg jq python3 curl
 ## Setup
 
 ```bash
-export KYMA_API_KEY=kyma-xxxxxxxx
+export WATCH_API_KEY=your-api-key
 ```
 
-Get a Kyma key at [kymaapi.com](https://kymaapi.com) — 60 seconds, no card.
-
-Prefer bring-your-own-keys? Comment in `GROQ_API_KEY` and `GOOGLE_AI_KEY`
-in `.env.example` and watch-cli falls back to direct provider calls.
-
----
-
-## Why Kyma
-
-watch-cli uses Kyma as its AI backend. A few things you get for free:
-
-![models](https://img.shields.io/endpoint?url=https://api.kymaapi.com/api/badge/models.json)
-![creators](https://img.shields.io/endpoint?url=https://api.kymaapi.com/api/badge/creators.json)
-![free credit](https://img.shields.io/endpoint?url=https://api.kymaapi.com/api/badge/free-credit.json)
-
-- **One key, every model in this CLI.** watch-cli calls Kyma using
-  capability aliases (`transcribe`, `audio-understand`). When Kyma swaps
-  in a better model behind the alias, your scripts keep working unchanged.
-- **Per-call cost in the response.** Every transcribe gives you a real
-  number, not an end-of-month dashboard surprise.
-- **Auto-fallback across providers.** If the underlying audio provider is
-  throttling or down, Kyma routes through another. Your script never sees
-  the outage.
-- **Free credit at signup.** About 9 hours of audio at the default rate.
-  Enough to know if you like it before you spend a cent.
-
-The badges above pull live from `api.kymaapi.com/api/stats`, so the model
-count and free-credit number stay current without a watch-cli release.
+Prefer bring-your-own-keys? Set `GROQ_API_KEY` and/or `GOOGLE_AI_KEY`
+in your environment or `.env` file to use direct provider calls.
 
 ---
 
@@ -218,8 +190,8 @@ audio-q <audio-or-video> "<question>" [--model <model-name>]
   Model selection (priority): --model flag > WATCH_AUDIO_MODEL env > backend default.
 
 models [--all]
-  List audio models available on Kyma (live, no hardcoded list).
-  --all to see every Kyma SKU (text + image + video + audio).
+  List audio models available (live, no hardcoded list).
+  --all to see every SKU (text + image + video + audio).
 ```
 
 ### Model selection for AI agents
@@ -236,9 +208,8 @@ Both `transcribe` and `audio-q` support flexible model selection, making them su
    - Example: `export WATCH_AUDIO_MODEL=whisper-large-v3-turbo`
 
 3. **Backend defaults** (fallback):
-   - `transcribe` in kyma mode: `transcribe` (alias)
-   - `transcribe` in byok mode: `whisper-large-v3-turbo`
-   - `audio-q` in direct mode: `gemini-2.5-flash`
+   - `transcribe` default: `whisper-large-v3-turbo`
+   - `audio-q` default: `gemini-2.5-flash`
 
 This design lets your agent dynamically choose models based on task requirements without code changes.
 
@@ -310,11 +281,11 @@ cp -r skills/watch-cli ~/.claude/skills/
 ```text
 URL ──▶ yt-dlp ──▶ video.mp4 ──┬──▶ ffmpeg ──▶ frames/*.jpg
                                 │
-                                └──▶ ffmpeg ──▶ audio.mp3 ──┬──▶ Kyma /v1/audio/transcriptions
-                                                            │     (model: transcribe alias or --model)
+                                └──▶ ffmpeg ──▶ audio.mp3 ──┬──▶ /v1/audio/transcriptions
+                                                            │     (model: transcribe or --model)
                                                             │
-                                                            └──▶ Kyma /v1/audio/understand
-                                                                  (model: audio-understand alias or --model)
+                                                            └──▶ /v1/audio/understand
+                                                                  (model: audio-understand or --model)
 ```
 
 Each step is a primitive. None of them needs a vision LLM.
@@ -346,8 +317,7 @@ free.
 | 1 hour (LinkedIn talk, podcast) | ~$0.05 |
 | 2 hours (conference talk) | ~$0.11 |
 
-Free credit at Kyma signup covers about 9 hours of transcribe. A BYOK
-path is available — see `.env.example`.
+Costs are approximate and depend on your chosen provider. A BYOK path is available — see `.env.example`.
 
 ### What works well
 
